@@ -2,6 +2,7 @@
 # 个人定制补丁（release-ios.yml 构建前执行）：
 #   1) Bundle ID: com.example.motonav -> org.esp32nav.motonav（高德 Key 绑定此 ID，含 .share 扩展）
 #   2) BleLink.swift 加「连上自动校时」：验证通过 / 连上就绪 / 每 2 秒心跳 发送 #TIME,<epoch秒>,<时区偏移秒>
+# 注：本文件属于 scripts/**，push 会触发 release-ios.yml（重出 IPA 的入口）。
 set -euo pipefail
 
 python3 - <<'PYEOF'
