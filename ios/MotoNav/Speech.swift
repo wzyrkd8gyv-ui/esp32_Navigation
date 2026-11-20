@@ -107,7 +107,7 @@ final class Speech: NSObject, AVSpeechSynthesizerDelegate {
 
     // MARK: - iOS v0.16 圆屏发声：离线合成 PCM → 重采样 16k 单声道 → BLE 流推给圆屏
 
-    /// 合成并流推一句导航播报（手机端不出声）。用系统自带 write(_:toBufferCallback:) 整段离线合成（iOS 13 起）。
+    /// 合成并流推一句导航播报（手机端不出声）。用系统自带 write(_:toBufferCallback:) 整段离线合成（iOS 13 起可用，兼容 deployment target iOS 15）。
     private func espSpeak(_ text: String) {
         espQueue.async { [weak self] in
             guard let self = self else { return }
