@@ -586,6 +586,20 @@ struct ContentView: View {
         CardView {
             Text("导航语音").foregroundColor(.white).bold()
             Toggle("导航静音", isOn: $settings.voiceMuted)
+            Toggle("从圆屏扬声器播报", isOn: $settings.voiceToEsp)
+            if settings.voiceToEsp {
+                HStack {
+                    Text("圆屏音量")
+                    Spacer()
+                    Text("\(settings.espVolume)").foregroundColor(ContentView.sub)
+                }
+                Slider(value: Binding<Double>(
+                    get: { Double(settings.espVolume) },
+                    set: { settings.espVolume = Int($0.rounded()) }
+                ), in: 0...100, step: 1)
+                Text("播报改从圆屏喇叭出声，手机端不再念（需要新版圆屏固件）")
+                    .font(.caption2).foregroundColor(ContentView.sub)
+            }
             Toggle("播报时压低音乐", isOn: $settings.duck)
             Picker("系统音色", selection: $voiceID) {
                 Text("自动优选中文").tag("")
