@@ -29,7 +29,7 @@ jobs:
       - name: Build unsigned iPhone IPA
         run: |
           set -o pipefail
-          ./scripts/build-ios-ipa.sh 2>&1 | tee build.log
+          bash ./scripts/build-ios-ipa.sh 2>&1 | tee build.log
       - name: Publish build log on failure
         if: failure()
         env:
@@ -45,7 +45,9 @@ jobs:
         shell: bash
         run: |
           VERSION=$(cat RELEASE_VERSION)
-          test -f "output/ios/MotoNav-${VERSION}-unsigned.ipa"
+          SRC=$(ls output/ios/*-unsigned.ipa | head -n1)
+          test -n "$SRC" || { echo "no ipa found"; exit 1; }
+          mv "$SRC" "output/ios/MotoNav-${VERSION}-unsigned.ipa"
           git archive --format=zip --prefix=MotoNav/ HEAD > "output/ios/MotoNav-${VERSION}-source.zip"
           cp docs/INSTALL-IOS.md output/ios/INSTALL-IOS.md
           cp "docs/RELEASE-IOS-${VERSION}.md" output/ios/RELEASE-NOTES.md
