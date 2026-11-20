@@ -127,9 +127,12 @@ final class Weather: ObservableObject {
         let alertLines = alerts.map { a -> String in
             [a["headline"], a["description"], a["instruction"]].compactMap { $0 as? String }.joined(separator: "\n")
         }
-        let detailParts: [String] = ["\(place) · \(text) \(Int(temp.rounded()))°", windText, rain, air]
-            + alertLines + [title] + allNotes + Array(Set(sources)).sorted()
-            + ["预警可能延迟，请以官方最新发布为准。更新：\(f.string(from: Date()))"]
+        var detailParts: [String] = ["\(place) · \(text) \(Int(temp.rounded()))°", windText, rain, air]
+        detailParts.append(contentsOf: alertLines)
+        detailParts.append(title)
+        detailParts.append(contentsOf: allNotes)
+        detailParts.append(contentsOf: Array(Set(sources)).sorted())
+        detailParts.append("预警可能延迟，请以官方最新发布为准。更新：\(f.string(from: Date()))")
         detail = detailParts.joined(separator: "\n\n")
         info = "\(place) \(text) \(Int(temp.rounded()))°；逐小时 \(hours.count) 个" + (allNotes.isEmpty ? "" : "；" + allNotes.joined(separator: "；"))
         lastAt = Date(); push()
