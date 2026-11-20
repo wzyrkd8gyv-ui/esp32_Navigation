@@ -259,9 +259,10 @@ final class WebMotorSession: ObservableObject {
         rerouting = true; lastReplan = Date(); status = "偏航，正在重新规划\(route.request.bicycle ? "自行车" : "摩托车")路线…"; let generation = token
         WebRouteMetadata.shared.stop();metadataSuspended=true;BleLink.shared.send("#y,1")
         var request = route.request; request.start = point; request.vias = Array(request.vias.dropFirst(nextVia))
+        let planned = request                            // 不可变拷贝：Sendable 闭包不能捕获可变 var
         Task { @MainActor in
             do {
-                let routes = try await MotorRoutes.load(request)
+                let routes = try await MotorRoutes.load(planned)
                 guard running, token == generation, let new = routes.first else { return }
                 self.route = new; cum = new.cum; progress = 0; stepIndex = 0; offCount = 0; nextVia = 0
                 tracker=MotorRouteTracker(new.points);confirmedArrival=false;lastFix=nil;previousFix=nil;metadataSuspended=false
