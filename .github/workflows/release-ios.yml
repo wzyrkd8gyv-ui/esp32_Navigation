@@ -19,8 +19,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Queue check
-        run: echo "runner slot acquired"
       - name: Personalize (bundle id + auto clock sync)
         run: bash scripts/patch-ios-personal.sh
       - name: Install locked iOS dependencies
