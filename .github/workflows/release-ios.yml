@@ -37,10 +37,11 @@ jobs:
         shell: bash
         run: |
           TAG="ios-v-debuglog"
-          gh release delete "$TAG" --yes 2>/dev/null || true
-          sleep 2
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "build log (auto)" --notes "自动发布的构建日志" >/dev/null
-          gh release upload "$TAG" build.log --clobber >/dev/null
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --title "build log (auto)" --notes "自动发布的构建日志" >/dev/null 2>&1 || true
+          if [ -f build.log ]; then
+            gh release upload "$TAG" build.log --clobber >/dev/null 2>&1 || true
+          fi
+          exit 0
       - name: Package source and instructions
         shell: bash
         run: |

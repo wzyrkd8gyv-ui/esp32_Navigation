@@ -74,10 +74,11 @@ print("[patch] BleLink.swift clock sync added")
 
 v = "ios/MotoNav/ContentView.swift"
 s = open(v, encoding="utf-8").read()
-a_close = "\n                                """)"
-r_close = "\n                """)"
-assert s.count(a_close) == 1, "contentview close anchor"
-s = s.replace(a_close, r_close, 1)
+q3 = '"' * 3
+old = "\n" + (" " * 32) + q3 + ")"
+new = "\n" + (" " * 16) + q3 + ")"
+assert s.count(old) == 1, "contentview close anchor"
+s = s.replace(old, new, 1)
 open(v, "w", encoding="utf-8").write(s)
 print("[patch] ContentView.swift multiline indent fixed")
 PYEOF
