@@ -136,6 +136,10 @@ final class Settings: ObservableObject {
         didSet { ud.set(leadMs,forKey:"lead_ms"); BleLink.shared.send("#L\(leadMs)") }
     }
     @Published var voiceMuted: Bool { didSet { ud.set(voiceMuted, forKey: "nav_muted") } }
+    /// iOS v0.16 圆屏发声：导航播报改从圆屏扬声器播出（手机端不出声，音量由 espVolume 控制）
+    @Published var voiceToEsp: Bool { didSet { ud.set(voiceToEsp, forKey: "voice_to_esp"); Speech.shared.stopNow() } }
+    /// iOS v0.16 圆屏扬声器音量 0~100（固件存 NVS，圆屏下次开机也记得）
+    @Published var espVolume: Int { didSet { ud.set(espVolume, forKey: "esp_volume"); BleLink.shared.send("#VOL,\(espVolume)") } }
 
     // Key 设置：用户在 App 里填自己的 key，只存在这台手机上。iOS v0.7 起代码里不再内置任何 key，没填时打开 App 会提醒
     /// 高德 key（iOS 平台，绑定这个 App 的 Bundle ID）：填好后 applyAmapKey() 马上交给高德
@@ -173,6 +177,8 @@ final class Settings: ObservableObject {
         curve = ud.bool(forKey: "map_curve")
         duck = ud.object(forKey: "voice_duck") as? Bool ?? true
         voiceMuted = ud.bool(forKey: "nav_muted")
+        voiceToEsp = ud.object(forKey: "voice_to_esp") as? Bool ?? false
+        espVolume = ud.object(forKey: "esp_volume") as? Int ?? 70
         mapOn = ud.object(forKey: "map_on") as? Bool ?? true
         mapSource = MapDefaults.source(ud)
         trail = ud.object(forKey: "map_trail") as? Int ?? 1
@@ -208,6 +214,7 @@ final class Settings: ObservableObject {
         b.send(progressRing ? "#M1" : "#M0")
         b.send("#L\(leadMs)")
         b.send(clean ? "#w,1" : "#w,0")
+        b.send("#VOL,\(espVolume)")                     // 圆屏扬声器音量（iOS v0.16）
     }
 
     // MARK: - 昼夜自动切换（和安卓版 Brightness.kt 一样：每分钟按当地日出日落检查一次）
