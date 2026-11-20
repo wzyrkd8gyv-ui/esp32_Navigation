@@ -25,7 +25,7 @@ jobs:
         working-directory: ios
         run: |
           sudo gem install cocoapods -v 1.16.2 --no-document
-          pod _1.16.2_ install --deployment
+          pod _1.16.2_ install
       - name: Build unsigned iPhone IPA
         run: ./scripts/build-ios-ipa.sh
       - name: Package source and instructions
