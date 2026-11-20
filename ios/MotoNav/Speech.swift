@@ -4,8 +4,8 @@ import AVFoundation
 ///
 /// 导航播报：高德把播报文字交给我们，用 iPhone 自带的语音念出来。
 /// 播报时把音乐压低（“压低音乐”开关），念完 0.4 秒后恢复；连着蓝牙耳机/头盔时从耳机里出声。
-/// iOS v0.16 起支持“圆屏发声”：打开后改用系统语音把文字合成成 16kHz 单声道 PCM，
-/// 经 BLE 新增的 AUD 特征值流推给圆屏扬声器播出，手机端不出声（与安卓版同一协议）。
+/// iOS v0.16 起支持“圆屏发声”：打开后改用系统语音把文字离线合成成 PCM（手机端不出声），
+/// 线性重采样成 16kHz 单声道 Int16 后经 BLE 新增的 AUD 特征值流推给圆屏扬声器播出（与安卓版同一协议）。
 final class Speech: NSObject, AVSpeechSynthesizerDelegate {
     static let shared = Speech()
     private let synth = AVSpeechSynthesizer()
@@ -15,9 +15,9 @@ final class Speech: NSObject, AVSpeechSynthesizerDelegate {
     private(set) var isSpeaking = false
 
     // ---- iOS v0.16 圆屏发声状态（全部只在 espQueue 上改）----
-    private var espGen = 0                            // 每开一句新播报 +1，旧句的回调作废
+    private let espSynth = AVSpeechSynthesizer()        // 专用离线合成器：只出 PCM 回调，不出声
+    private var espGen = 0                              // 每开一句新播报 +1，旧句的回调作废
     private var espSpeaking = false
-    private var espIds = Set<ObjectIdentifier>()      // 当前这句的请求对象
     private let espQueue = DispatchQueue(label: "motonav.esp-voice")
 
     override init() {
@@ -105,14 +105,10 @@ final class Speech: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
-    // MARK: - iOS v0.16 圆屏发声：合成 16kHz 单声道 PCM → BLE 流推给圆屏
+    // MARK: - iOS v0.16 圆屏发声：离线合成 PCM → 重采样 16k 单声道 → BLE 流推给圆屏
 
-    /// 合成并流推一句导航播报（手机端不出声）。系统 < iOS 17 时退回手机出声。
+    /// 合成并流推一句导航播报（手机端不出声）。用系统自带 write(_:toBufferCallback:) 整段离线合成（iOS 13 起）。
     private func espSpeak(_ text: String) {
-        guard #available(iOS 17.0, *) else {
-            localSpeak(text)
-            return
-        }
         espQueue.async { [weak self] in
             guard let self = self else { return }
             self.stopEspLocked()                        // 打断上一句（立刻 #AUD,0）
@@ -122,34 +118,41 @@ final class Speech: NSObject, AVSpeechSynthesizerDelegate {
             u.voice = self.selectedVoice()
             u.rate = Float(UserDefaults.standard.object(forKey: "voice_rate") as? Double ?? Double(AVSpeechUtteranceDefaultSpeechRate))
             u.pitchMultiplier = Float(UserDefaults.standard.object(forKey: "voice_pitch") as? Double ?? 1.0)
-            guard let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                          sampleRate: 16000, channels: 1,
-                                          interleaved: false) else { return }
-            let req = AVSpeechSynthesisBufferRequest(utterance: u, outputFormat: fmt)
-            self.espIds.insert(ObjectIdentifier(req))
-            req.didReceiveOutputBuffer = { [weak self] buf in
+            self.espSpeaking = true
+            DispatchQueue.main.async { [weak self] in self?.isSpeaking = true }
+            // 整段离线合成（阻塞调用，只出回调不出声）；每段 PCM 都排队进 espQueue，写完自动收尾
+            self.espSynth.write(u) { [weak self] buf in
                 self?.espQueue.async { self?.appendEspLocked(buf, gen: gen) }
             }
-            req.didFinish = { [weak self] in
-                self?.espQueue.async { self?.finishEspLocked(gen) }
-            }
-            self.espSpeaking = true
-            DispatchQueue.main.async { [weak self] in
-                self?.isSpeaking = true
-                self?.synth.write(req)                  // 离线合成：只出 PCM 回调，不出声
-            }
+            self.espQueue.async { [weak self] in self?.finishEspLocked(gen) }
         }
     }
 
-    /// 把合成出来的一段 Float32 PCM（已是 16kHz 单声道）转 Int16 喂给 BleLink
-    private func appendEspLocked(_ buf: AVAudioPCMBuffer, gen: Int) {
-        guard gen == espGen, espSpeaking, let ch = buf.floatChannelData?[0] else { return }
-        let n = Int(buf.frameLength)
+    /// 把合成出来的一段 PCM（音色的原生采样率，取第一声道）线性重采样成 16kHz 单声道 Int16 喂给 BleLink
+    private func appendEspLocked(_ buf: AVAudioBuffer, gen: Int) {
+        guard gen == espGen, espSpeaking, let p = buf as? AVAudioPCMBuffer else { return }
+        let n = Int(p.frameLength)
         guard n > 0 else { return }
-        var pcm = [Int16](repeating: 0, count: n)
-        for i in 0..<n {
-            let v = Double(ch[i])
-            let c = v > 1.0 ? 1.0 : (v < -1.0 ? -1.0 : v)
+        let channels = Int(p.format.channelCount)
+        let stride = p.format.isInterleaved ? channels : 1
+        let raw: UnsafeMutablePointer<Float>
+        if let ch = p.floatChannelData?[0] {
+            raw = ch
+        } else if let d = p.audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Float.self) {
+            raw = d
+        } else { return }
+        let srcRate = Double(p.format.sampleRate)
+        guard srcRate > 0 else { return }
+        let ratio = srcRate / 16000.0
+        let outN = max(1, Int((Double(n) / ratio).rounded(.up)))
+        var pcm = [Int16](repeating: 0, count: outN)
+        for i in 0..<outN {
+            let f = Double(i) * ratio
+            let i0 = min(Int(f), n - 1) * stride
+            let i1 = min(Int(f) + stride, (n - 1) * stride)
+            let fr = Float(f - floor(f))
+            let s = raw[i0] * (1 - fr) + raw[i1] * fr
+            let c = s > 1.0 ? 1.0 : (s < -1.0 ? -1.0 : s)
             pcm[i] = Int16(c * 32767.0)
         }
         BleLink.shared.streamAudio(pcm)                 // BleLink 负责 #AUD,1 开头 + 320B/10ms 节奏
@@ -166,7 +169,6 @@ final class Speech: NSObject, AVSpeechSynthesizerDelegate {
     /// 立刻掐断圆屏发声（点静音/切换模式/开新句时调用）
     private func stopEspLocked() {
         espGen += 1                                     // 旧句回调全部作废
-        espIds.removeAll()
         let was = espSpeaking
         espSpeaking = false
         if was { BleLink.shared.stopAudioStream() }     // 立刻 #AUD,0，圆屏马上停
@@ -174,23 +176,10 @@ final class Speech: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
-        DispatchQueue.main.async { self.utteranceEnded(u) }
+        DispatchQueue.main.async { self.finished() }
     }
     func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
-        DispatchQueue.main.async { self.utteranceEnded(u) }
-    }
-
-    /// 圆屏发声的合成走 write()，也会走到这两个回调：是 ESP 句就在 espQueue 上收尾，否则走手机端收尾
-    private func utteranceEnded(_ u: AVSpeechUtterance) {
-        let id = ObjectIdentifier(u)
-        espQueue.async { [weak self] in
-            guard let self = self else { return }
-            if self.espIds.remove(id) != nil {
-                self.finishEspLocked(self.espGen)       // 被取消时 gen 已作废，自然 no-op
-                return
-            }
-            DispatchQueue.main.async { self.finished() }
-        }
+        DispatchQueue.main.async { self.finished() }
     }
 
     /// 马上停止正在念的（点了静音/切换发声模式）
