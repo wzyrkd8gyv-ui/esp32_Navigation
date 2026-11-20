@@ -27,7 +27,20 @@ jobs:
           sudo gem install cocoapods -v 1.16.2 --no-document
           pod _1.16.2_ install
       - name: Build unsigned iPhone IPA
-        run: ./scripts/build-ios-ipa.sh
+        run: |
+          set -o pipefail
+          ./scripts/build-ios-ipa.sh 2>&1 | tee build.log
+      - name: Publish build log on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="ios-v-debuglog"
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          sleep 2
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "build log (auto)" --notes "自动发布的构建日志" >/dev/null
+          gh release upload "$TAG" build.log --clobber >/dev/null
       - name: Package source and instructions
         shell: bash
         run: |
