@@ -49,6 +49,9 @@ import Foundation
 //   iOS v0.13.9 支持导入高德「行程报告」分享（导航结束→分享行程 / 我的足迹→分享）：短链里的 urlParameter
 //             经 m5.amap.com/ws/share/lbs 的 info + route/restoration 两个接口还原起终点和整条路线，
 //             按 naviType 自动识别驾车 / 摩托车
-let APP_VERSION = "iOS v0.15.0"
+//   iOS v0.16  和安卓版对齐「圆屏发声」：设置里打开「从圆屏扬声器播报」后，导航播报用系统语音合成成
+//             16kHz 单声道 PCM，经新增的 AUD 蓝牙特征值流推给圆屏扬声器播出（手机端不出声）；
+//             可调圆屏扬声器音量 0~100（发 #VOL,N，固件存 NVS 重启也记得）。需要圆屏固件 v7.12.17-pages.5 及以上
+let APP_VERSION = "iOS v0.16.0"
 
 // 高德 key 不再写在代码里（iOS v0.7 起）：用户在 App 的「Key 设置」里填，存在手机上，见 Settings.swift
