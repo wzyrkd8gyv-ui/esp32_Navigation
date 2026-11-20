@@ -123,7 +123,14 @@ final class Weather: ObservableObject {
         }
         var sources = ["和风天气 QWeather · https://www.qweather.com/", "https://developer.qweather.com/attribution.html"]
         for item in r { sources += dict(item?["metadata"])["attributions"] as? [String] ?? [] }
-        detail = (["\(place) · \(text) \(Int(temp.rounded()))°", windText, rain, air] + alerts.map { [ $0["headline"], $0["description"], $0["instruction"] ].compactMap { $0 as? String }.joined(separator: "\n") } + [title] + allNotes + Array(Set(sources)).sorted() + ["预警可能延迟，请以官方最新发布为准。更新：\(f.string(from: Date()))"]).joined(separator: "\n\n")
+        // 拆成小表达式：老编译器（Xcode 16.x）对大表达式会类型检查超时
+        let alertLines = alerts.map { a -> String in
+            [a["headline"], a["description"], a["instruction"]].compactMap { $0 as? String }.joined(separator: "\n")
+        }
+        let detailParts: [String] = ["\(place) · \(text) \(Int(temp.rounded()))°", windText, rain, air]
+            + alertLines + [title] + allNotes + Array(Set(sources)).sorted()
+            + ["预警可能延迟，请以官方最新发布为准。更新：\(f.string(from: Date()))"]
+        detail = detailParts.joined(separator: "\n\n")
         info = "\(place) \(text) \(Int(temp.rounded()))°；逐小时 \(hours.count) 个" + (allNotes.isEmpty ? "" : "；" + allNotes.joined(separator: "；"))
         lastAt = Date(); push()
     }
