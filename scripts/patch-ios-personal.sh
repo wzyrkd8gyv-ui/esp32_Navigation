@@ -2,6 +2,7 @@
 # 个人定制补丁（release-ios.yml 构建前执行）：
 #   1) Bundle ID: com.example.motonav -> org.esp32nav.motonav（高德 Key 绑定此 ID，含 .share 扩展）
 #   2) BleLink.swift 加「连上自动校时」：验证通过 / 连上就绪 / 每 2 秒心跳 发送 #TIME,<epoch秒>,<时区偏移秒>
+#   3) ContentView.swift 调试信息多行字符串缩进修复（上游 bug，Xcode 26 编译不过）
 # 注：本文件属于 scripts/**，push 会触发 release-ios.yml（重出 IPA 的入口）。
 set -euo pipefail
 
@@ -70,4 +71,13 @@ s = s.replace(a_auth, r_auth, 1)
 
 open(f, "w", encoding="utf-8").write(s)
 print("[patch] BleLink.swift clock sync added")
+
+v = "ios/MotoNav/ContentView.swift"
+s = open(v, encoding="utf-8").read()
+a_close = "\n                                """)"
+r_close = "\n                """)"
+assert s.count(a_close) == 1, "contentview close anchor"
+s = s.replace(a_close, r_close, 1)
+open(v, "w", encoding="utf-8").write(s)
+print("[patch] ContentView.swift multiline indent fixed")
 PYEOF
