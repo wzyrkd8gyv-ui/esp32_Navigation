@@ -66,6 +66,14 @@ final class BleLink: NSObject, ObservableObject {
     private var writePacer = BleWritePacer()
     private var pumpScheduled = false
 
+    // iOS v0.16 圆屏发声（AUD 流，与安卓版同协议）：#AUD,1 开始 → 320 字节/10ms 写 AUD 特征值 → #AUD,0 结束
+    private let audUUID = CBUUID(string: "6e400004-b5a3-f393-e0a9-e50e24dcca9e")
+    private var audChar: CBCharacteristic?
+    private var audioQ = Data()                          // 待写出的 PCM（16kHz 单声道 Int16）
+    private var audioEndPending = false                  // 数据已收齐，发完后要 #AUD,0
+    private var audioBegan = false                       // #AUD,1 已发
+    private var audioTimer: Timer?
+
     /// 圆屏发来的通知（主线程回调）
     var onNotify: ((String) -> Void)?
 
@@ -119,7 +127,7 @@ final class BleLink: NSObject, ObservableObject {
         MusicBridge.shared.resetAMS()
         peripheral = p
         p.delegate = self
-        rxChar=nil;txChar=nil
+        rxChar=nil;txChar=nil;audChar=nil
         if p.state == .connected { discover(p);return }
         status = "正在连接…"
         handshake.begin(.connecting,now:ProcessInfo.processInfo.systemUptime)
@@ -359,6 +367,87 @@ final class BleLink: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - iOS v0.16 圆屏发声：PCM 流推送（Speech 合成回调里喂数据；全部切到主线程排队）
+
+    /// 喂一段 16kHz 单声道 Int16 PCM（第一段数据会先发 #AUD,1 开始流）
+    func streamAudio(_ pcm: [Int16]) {
+        guard !pcm.isEmpty else { return }
+        let bytes = pcm.withUnsafeBytes { Data($0) }
+        DispatchQueue.main.async { self.feedAudio(bytes) }
+    }
+
+    /// 这句合成完了：剩余数据发完后 #AUD,0 结束流
+    func finishAudio() {
+        DispatchQueue.main.async { self.feedAudio(nil) }
+    }
+
+    /// 立刻掐断当前流（点静音/切换模式/开新句）
+    func stopAudioStream() {
+        DispatchQueue.main.async { self.killAudio() }
+    }
+
+    private func feedAudio(_ bytes: Data?) {
+        if let b = bytes {
+            if !audioBegan {
+                audioBegan = true
+                sendOnce("#AUD,1")                       // 圆屏进入流播放状态
+            }
+            audioQ.append(b)
+            while audioQ.count > 65536 { audioQ.removeFirst(1600) }   // 兜底：圆屏太慢时丢最旧的，别把内存吃爆
+            startAudioTimer()
+        } else {
+            audioEndPending = true                       // 数据已全部到位，排空后收尾
+            startAudioTimer()
+        }
+    }
+
+    private func startAudioTimer() {
+        guard audioTimer == nil, audioBegan, !audioQ.isEmpty || audioEndPending else { return }
+        let t = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] _ in self?.audioTick() }
+        RunLoop.main.add(t, forMode: .common)
+        audioTimer = t
+    }
+
+    /// 每 10ms 写 320 字节（16kHz×16bit = 32KB/s，正好实时）；写完且收齐了就 #AUD,0
+    private func audioTick() {
+        guard isReady, let p = peripheral, let aud = audChar else {
+            // 圆屏没连好或旧固件没有 AUD 通道：憋着也没用，直接清掉
+            audioQ = Data()
+            audioEndPending = false
+            audioBegan = false
+            audioTimer?.invalidate(); audioTimer = nil
+            return
+        }
+        guard p.canSendWriteWithoutResponse else { return }   // 蓝牙忙：数据留着，下个节拍再写
+        let chunk = min(320, audioQ.count)
+        if chunk > 0 {
+            p.writeValue(audioQ.prefix(chunk), for: aud, type: .withoutResponse)
+            audioQ.removeFirst(chunk)
+            lastWriteAt = Date()
+        }
+        if audioQ.isEmpty {
+            if audioEndPending {
+                audioEndPending = false
+                audioBegan = false
+                audioTimer?.invalidate(); audioTimer = nil
+                sendOnce("#AUD,0")
+            } else {
+                audioTimer?.invalidate(); audioTimer = nil   // 数据排空，等下一段来了再起节奏
+            }
+        }
+    }
+
+    /// 掐断：清队列，流开着就发 #AUD,0
+    private func killAudio() {
+        audioQ = Data()
+        audioEndPending = false
+        audioTimer?.invalidate(); audioTimer = nil
+        if audioBegan {
+            audioBegan = false
+            sendOnce("#AUD,0")
+        }
+    }
+
     /// 连上后：设置类消息放最前，再补发其他状态和文字图片
     private func onLinkReady() {
         guard !isReady, txNotifyReady else { return }
@@ -437,7 +526,8 @@ extension BleLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         mediaHIDSupported = false; mediaHIDReady = false; mediaHIDMode = false; mediaLyricsSupported = false; mediaLyricsActive = false; mediaAMSControls = 0; verified = false; buildingProbe.reset(); txNotifyReady = false
         MusicBridge.shared.resetAMS()
         MapFeeder.shared.onBuildingCapability()
-        rxChar = nil;txChar=nil
+        killAudio()                                     // iOS v0.16 断了就把音频流状态清掉
+        rxChar = nil;txChar=nil;audChar=nil
         status = wantConnected ? "断开了，等圆屏回来自动重连…" : "未连接"
         handshake.begin(.idle,now:ProcessInfo.processInfo.systemUptime)
         if wantConnected { retryConnection(p) }
@@ -446,7 +536,7 @@ extension BleLink: CBCentralManagerDelegate, CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
         guard p === peripheral else { return }
         guard let s = p.services?.first(where: { $0.uuid == serviceUUID }) else { status = "找不到圆屏的服务"; return }
-        p.discoverCharacteristics([rxUUID, txUUID], for: s)
+        p.discoverCharacteristics([rxUUID, txUUID, audUUID], for: s)
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
@@ -454,6 +544,7 @@ extension BleLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         handshake.begin(.notifications,now:ProcessInfo.processInfo.systemUptime)
         for ch in s.characteristics ?? [] {
             if ch.uuid == rxUUID { rxChar = ch }
+            if ch.uuid == audUUID { audChar = ch }      // iOS v0.16 圆屏发声：旧固件没有这条特征值，audChar 就是 nil
             if ch.uuid == txUUID {
                 txChar=ch
                 txNotifyReady = ch.isNotifying
